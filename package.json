@@ -1,0 +1,16 @@
+{
+  "name": "bgg-athena",
+  "version": "1.0.0",
+  "description": "Scrapes data from BGG to a MongoDB mirror",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Chris Dadabo",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "axios": "^0.27.2",
+    "xml2json": "^0.12.0"
+  },
+  "repository": "https://github.com/CMDadabo/bgg-athena"
+}
