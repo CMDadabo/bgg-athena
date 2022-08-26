@@ -1,19 +1,9 @@
 // Scraper
 const axios = require("axios").default;
 const xml2json = require("xml2json");
-
-const getGameInfoById = (gameId) =>
-  axios
-    .get(
-      `https://api.geekdo.com/xmlapi2/thing?id=${gameId}&thingtype=boardgame&versions=0&videos=0&stats=1&marketplace=0&comments=0&ratingcomments=0&page=1&pagesize=25`
-    )
-    .then((res) => {
-      const parsed = parseGameItem(
-        xml2json.toJson(res.data, { object: true }).items.item
-      );
-
-      return parsed;
-    });
+const _ = require("lodash");
+const { getTopGames, getGamesByIds } = require("./bggClient");
+const { connectClient } = require("./mongoClient");
 
 const parseGameItem = (gameItem) => {
   const { description, id, image, thumbnail, type } = gameItem;
@@ -22,23 +12,82 @@ const parseGameItem = (gameItem) => {
 
   // Extract name and alternativeNames
   parsedGameItem.alternativeNames = [];
-  gameItem.name.forEach((name) => {
-    if (name.type === "primary") {
-      parsedGameItem.name = name.value;
-    } else {
-      parsedGameItem.alternativeNames.push(name.value);
-    }
-  });
+
+  if (!_.isArray(gameItem.name)) {
+    parsedGameItem.name = gameItem.name.value;
+  } else {
+    gameItem.name.forEach((name) => {
+      if (name.type === "primary") {
+        parsedGameItem.name = name.value;
+      } else {
+        parsedGameItem.alternativeNames.push(name.value);
+      }
+    });
+  }
 
   // Extract poll results and data
   gameItem.poll.forEach((poll) => {
     if (poll.name === "suggested_numplayers") {
+      // Save polldata
       parsedGameItem.suggested_numplayers_polldata = poll;
-      parsedGameItem.suggested_numplayers_best = poll.results.sort(
-        (a, b) =>
-          b.result.find((r) => r.value === "Best").numVotes -
-          a.result.find((r) => r.value === "Best").numVotes
-      )[0].numplayers;
+
+      // Get best and recommended player counts
+      parsedGameItem.suggested_numplayers_best = null;
+      parsedGameItem.suggested_numplayers_recommended = [];
+      let bestPlayerCountVotes = 0;
+
+      poll.results.forEach((option) => {
+        const voteData = {};
+        option.result.forEach(
+          ({ value, numvotes }) => (voteData[value] = numvotes)
+        );
+
+        if (voteData["Best"] > bestPlayerCountVotes) {
+          bestPlayerCountVotes = voteData["Best"];
+          parsedGameItem.suggested_numplayers_best = option.numplayers;
+        }
+
+        if (
+          voteData["Recommended"] + voteData["Best"] >
+          voteData["Not Recommended"]
+        ) {
+          parsedGameItem.suggested_numplayers_recommended.push(
+            option.numplayers
+          );
+        }
+      });
+    } else {
+      const valueKey = poll.name === "language_dependence" ? "level" : "value";
+
+      let modeValue, medianValue;
+      let modeVotes = 0,
+        totalValue = 0;
+      let remainingVotes = poll.totalvotes;
+
+      poll.results.result.forEach((option) => {
+        if (option.numvotes > modeVotes) {
+          modeVotes = option.numvotes;
+          modeValue = option[valueKey];
+        }
+
+        totalValue +=
+          (option[valueKey] === "21 and up" ? 21 : option[valueKey]) *
+          option.numvotes;
+
+        if (!medianValue) {
+          remainingVotes -= option.numvotes;
+
+          if (remainingVotes < poll.totalvotes / 2) {
+            medianValue = option[valueKey];
+          }
+        }
+      });
+
+      parsedGameItem[`${poll.name}_mean`] = parseFloat(
+        (totalValue / poll.totalvotes).toFixed(2)
+      );
+      parsedGameItem[`${poll.name}_median`] = medianValue;
+      parsedGameItem[`${poll.name}_mode`] = modeValue;
     }
   });
 
@@ -61,9 +110,63 @@ const parseGameItem = (gameItem) => {
     }
   });
 
-  console.log(parsedGameItem);
+  // Extract ratings
+  Object.entries(gameItem.statistics.ratings).forEach(([key, value]) => {
+    if (
+      typeof value === "object" &&
+      Object.keys(value).length === 1 &&
+      Object.keys(value)[0] === "value"
+    ) {
+      parsedGameItem[`ratings_${key}`] = value.value;
+    }
+  });
 
   return parsedGameItem;
 };
 
-getGameInfoById(174430);
+async function main() {
+  async function getFirstXGames(num = 1000) {
+    const topGames = await getTopGames(num);
+
+    const games = await getGamesByIds(topGames);
+
+    await Promise.all(
+      games.map((game) => dbClient.upsertGame(parseGameItem(game)))
+    );
+  }
+
+  const dbClient = await connectClient();
+
+  const gameNetwork = await dbClient.getSimilarGameNetwork();
+
+  const links = [];
+  const nodes = [];
+
+  const visitedSources = {};
+
+  gameNetwork.forEach((game) => {
+    nodes.push({
+      id: game.id,
+      name: game.name,
+      rating: game.ratings_bayesaverage,
+      year: game.yearpublished,
+    });
+
+    if (!game.similar_games) return;
+
+    game.similar_games.forEach(({ id, similarity }) => {
+      if (!visitedSources[`${game.id}-${id}`]) {
+        links.push({
+          source: game.id,
+          target: id,
+          value: similarity,
+        });
+        visitedSources[`${game.id}-${id}`] = true;
+      }
+    });
+  });
+
+  dbClient.close();
+}
+
+main();
