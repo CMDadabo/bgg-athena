@@ -17,23 +17,16 @@ async function connectClient() {
 
   return {
     async upsertGame(game) {
-      return games.updateOne({ id: game.id }, { $set: game }, { upsert: true });
-    },
-    async findSimilarGames(gameId) {
-      const game = await games.findOne({ id: gameId });
-
-      const gamesCursor = await games.find(
-        {},
-        {
-          sort: { ratings_bayesaverage: -1 },
-        }
+      return games.updateOne(
+        { id: game.id },
+        { $set: game, $unset: { similarGames: "" } },
+        { upsert: true }
       );
-
+    },
+    async findSimilarGames(game, otherGames) {
       const similarGames = [];
 
-      await gamesCursor.forEach((compareGame) => {
-        if (game.id === compareGame.id) return;
-
+      otherGames.forEach((compareGame) => {
         const criteria = {
           boardgamecategory: 25,
           boardgamemechanic: 25,
@@ -62,6 +55,12 @@ async function connectClient() {
             weight;
         });
 
+        compareGame.similar_games.push({
+          id: game.id,
+          name: game.name,
+          similarity,
+        });
+
         similarGames.push({
           id: compareGame.id,
           name: compareGame.name,
@@ -79,23 +78,34 @@ async function connectClient() {
         { upsert: true }
       );
 
-      return topSimilarGames;
+      return similarGames;
     },
     async findAllSimilarGames() {
-      const gamesCursor = await games.find(
-        {},
-        {
-          sort: { ratings_bayesaverage: -1 },
-        }
+      const allGames = [];
+
+      const gamesCursor = await games
+        .find({})
+        .sort({ ratings_bayesaverage: -1 })
+        .limit(1000);
+
+      while (await gamesCursor.hasNext()) {
+        const currGame = await gamesCursor.next();
+
+        currGame.similar_games = this.findSimilarGames(currGame, allGames);
+
+        allGames.push(currGame);
+      }
+
+      await Promise.all(
+        allGames
+          .map((game) => ({
+            ...game,
+            similar_games: game.similar_games
+              .sort((a, b) => b.similarity - a.similarity)
+              .slice(0, 10),
+          }))
+          .map((game) => this.upsertGame(game))
       );
-
-      const threads = [];
-
-      await gamesCursor.forEach(async (game) =>
-        threads.push(this.findSimilarGames(game.id))
-      );
-
-      await Promise.all(threads);
     },
     async getSimilarGameNetwork() {
       const gamesCursor = await games.find(

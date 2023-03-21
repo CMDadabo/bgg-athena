@@ -62,6 +62,10 @@ function ForceGraph(
     .forceSimulation(nodes)
     .force("link", forceLink)
     .force("charge", forceNode)
+    .force(
+      "collide",
+      d3.forceCollide().radius((d) => nodeRadius(d) * 1.33)
+    )
     .force("x", d3.forceX())
     .force("y", d3.forceY())
     .on("tick", ticked);
@@ -150,10 +154,25 @@ function ForceGraph(
   return Object.assign(svg.node(), { scales: { color } });
 }
 
+const minRating = d3.min(games.nodes.map((n) => n.rating));
+const maxRating = d3.max(games.nodes.map((n) => n.rating));
+
+const sizeRatingScale = d3
+  .scalePow()
+  .domain([minRating, maxRating])
+  .range([3, 20]);
+// const sizeRankScale = d3.scalePow().domain([0, 1000]).range([3, 20]);
+
 chart = ForceGraph(games, {
   nodeId: (d) => d.id,
   nodeGroup: (d) => d.group,
-  nodeTitle: (d) => `${d.id} (${d.group})`,
+  nodeTitle: (d) => d.name,
+  linkStrength: (l) => {
+    console.log(games.links[l.index].value);
+    return games.links[l.index].value / 50;
+  },
+  nodeRadius: (n) => sizeRatingScale(games.nodes[n.index].rating),
+  // nodeRadius: (n) => sizeRankScale(n.index),
   width: 1000,
   height: 800,
   invalidation: Promise.resolve(), // a promise to stop the simulation when the cell is re-run

@@ -137,6 +137,8 @@ async function main() {
 
   const dbClient = await connectClient();
 
+  // const gamesWithSimilarGames = await dbClient.findAllSimilarGames();
+
   const gameNetwork = await dbClient.getSimilarGameNetwork();
 
   const links = [];
@@ -154,8 +156,8 @@ async function main() {
 
     if (!game.similar_games) return;
 
-    game.similar_games.forEach(({ id, similarity }) => {
-      if (!visitedSources[`${game.id}-${id}`]) {
+    game.similar_games.slice(0, 2).forEach(({ id, similarity }) => {
+      if (!visitedSources[`${id}-${game.id}`] && similarity > 40) {
         links.push({
           source: game.id,
           target: id,
