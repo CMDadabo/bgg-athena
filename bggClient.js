@@ -34,7 +34,7 @@ module.exports = {
 
   async getGamesByIds(boardgameIds) {
     const res = await axios.get(
-      `https://www.boardgamegeek.com/xmlapi2/thing?type=boardgame&stats=1&id=${boardgameIds.join(
+      `https://www.boardgamegeek.com/xmlapi2/thing?type=boardgame&stats=1&versions=1&id=${boardgameIds.join(
         ","
       )}`
     );

@@ -4,11 +4,37 @@ const xml2json = require("xml2json");
 const _ = require("lodash");
 const { getTopGames, getGamesByIds } = require("./bggClient");
 const { connectClient } = require("./mongoClient");
+const { size } = require("lodash");
 
 const parseGameItem = (gameItem) => {
   const { description, id, image, thumbnail, type } = gameItem;
 
   const parsedGameItem = { description, id, image, thumbnail, type };
+
+  const boxSizesDict = {};
+
+  const versions = gameItem.versions.item.forEach((v) => {
+    const depth = v.depth?.value;
+    const length = v.length?.value;
+    const width = v.width?.value;
+
+    if (!(depth && length && width)) return;
+
+    const sizeKey = `${depth};${length};${width}`;
+
+    if (!boxSizesDict[sizeKey]) {
+      boxSizesDict[sizeKey] = {
+        count: 1,
+        latestYearPublished: v.yearpublished,
+      };
+    }
+
+    boxSizesDict[sizeKey].count = boxSizesDict[sizeKey].count + 1;
+
+    if (v.yearpublished > boxSizesDict[sizeKey].yearpublished) {
+      boxSizesDict[sizeKey].latestYearPublished = v.yearpublished;
+    }
+  });
 
   // Extract name and alternativeNames
   parsedGameItem.alternativeNames = [];
@@ -130,7 +156,7 @@ async function main() {
 
     const games = await getGamesByIds(topGames);
 
-    await Promise.all(
+    return await Promise.all(
       games.map((game) => dbClient.upsertGame(parseGameItem(game)))
     );
   }
@@ -167,6 +193,8 @@ async function main() {
       }
     });
   });
+
+  const games = await getFirstXGames(2);
 
   dbClient.close();
 }
